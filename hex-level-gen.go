@@ -2,6 +2,7 @@ package main
 
 import (
 	"encoding/json"
+	"errors"
 	"io/ioutil"
 	"log"
 	"math"
@@ -17,19 +18,27 @@ const (
 	numCols   = 9
 	numLevels = 250
 
+	maxClusterProb = .7
 	minClusterProb = .2
-	maxClusterProb = .75
 
 	outDir = "levels"
 
-	bombDecreaseFactor  = .995
-	superDecreaseFactor = .97
+	targetMultiple = 50
 
-	minNiceness = .2
+	minTargetScore = 100
+	maxTargetScore = 1500
+
+	maxPushInterval = 15
+	minPushInterval = 5
+
 	maxNiceness = .5
+	minNiceness = .2
 
-	minBombProb  = .15
-	minSuperProb = .025
+	maxBombProb = .33
+	minBombProb = .2
+
+	maxSuperProb = .075
+	minSuperProb = .01
 )
 
 var (
@@ -60,33 +69,45 @@ func main() {
 		os.Mkdir(outDir, 0644)
 	}
 
-	hexProb := .65
-	bombProb := .25
-	superProb := .1
+	hexProb := 1.0 - maxBombProb - maxSuperProb
+	bombProb := maxBombProb
+	superProb := maxSuperProb
 
 	var currLevel int
 	for currLevel = 0; currLevel < numLevels; currLevel++ {
 		currJsonMap := make(map[string]interface{})
 
 		// Linear decrease in cluster probability as level number increases
-		clusterProb := maxClusterProb - (maxClusterProb-minClusterProb)*(float64(currLevel)/float64(numLevels))
+		//clusterProb := maxClusterProb - (maxClusterProb-minClusterProb)*(float64(currLevel)/float64(numLevels))
+		clusterProb := linearScale(0, numLevels, minClusterProb, maxClusterProb, numLevels-currLevel)
 
 		// Linear decrease in niceness probability as level number increases
-		niceness := maxNiceness - (maxNiceness-minNiceness)*(float64(currLevel)/float64(numLevels))
+		//niceness := maxNiceness - (maxNiceness-minNiceness)*(float64(currLevel)/float64(numLevels))
+		niceness := linearScale(0, numLevels, minNiceness, maxNiceness, numLevels-currLevel)
 
-		currJsonMap["target"] = 100 + (currLevel/10)*50
-		currJsonMap["pushInterval"] = math.Max(5, (float64)(10-(currLevel/25)))
+		bombProb = linearScale(0, numLevels, minBombProb, maxBombProb, numLevels-currLevel)
+		superProb = linearScale(0, numLevels, minSuperProb, maxSuperProb, numLevels-currLevel)
+		hexProb = 1.0 - bombProb - superProb
+
+		pushInterval := linearScale(0, numLevels, minPushInterval, maxPushInterval, numLevels-currLevel)
+		pushInterval = math.Ceil(pushInterval)
+
+		targetScore := linearScale(0, numLevels, minTargetScore, maxTargetScore, currLevel)
+
+		currJsonMap["target"] = nearestMultiple(int(targetScore), targetMultiple)
+		currJsonMap["pushInterval"] = int(pushInterval)
 		currJsonMap["hexProb"] = hexProb
 		currJsonMap["bombProb"] = bombProb
 		currJsonMap["superProb"] = superProb
 		currJsonMap["niceness"] = niceness
 
-		bombProb *= bombDecreaseFactor
-		bombProb = math.Max(minBombProb, bombProb)
-		superProb *= superDecreaseFactor
-		superProb = math.Max(minSuperProb, superProb)
-		hexProb = 1.0 - bombProb - superProb
-
+		/*
+			bombProb *= bombDecreaseFactor
+			bombProb = math.Max(minBombProb, bombProb)
+			superProb *= superDecreaseFactor
+			superProb = math.Max(minSuperProb, superProb)
+			hexProb = 1.0 - bombProb - superProb
+		*/
 		var currRow, currCol int
 		for currRow = 1; currRow <= numRows; currRow++ {
 
@@ -118,6 +139,74 @@ func main() {
 		if err != nil {
 			log.Fatal("Error writing final json data to level file: ", err)
 		}
+	}
+}
+
+func linearScale(fromMin, fromMax, toMin, toMax, fromInput interface{}) float64 {
+	var err error
+	fromMinFloat, err := toFloat64(fromMin)
+	if !checkErr(err) {
+		return -1.0
+	}
+	fromMaxFloat, err := toFloat64(fromMax)
+	if !checkErr(err) {
+		return -1.0
+	}
+	toMinFloat, err := toFloat64(toMin)
+	if !checkErr(err) {
+		return -1.0
+	}
+	toMaxFloat, err := toFloat64(toMax)
+	if !checkErr(err) {
+		return -1.0
+	}
+	fromInputFloat, err := toFloat64(fromInput)
+	if !checkErr(err) {
+		return -1.0
+	}
+
+	return (toMaxFloat-toMinFloat)*((fromInputFloat-fromMinFloat)/(fromMaxFloat-fromMinFloat)) + toMinFloat
+}
+
+func toFloat64(x interface{}) (float64, error) {
+	switch x := x.(type) {
+	case uint8:
+		return float64(x), nil
+	case int8:
+		return float64(x), nil
+	case uint16:
+		return float64(x), nil
+	case int16:
+		return float64(x), nil
+	case uint32:
+		return float64(x), nil
+	case int32:
+		return float64(x), nil
+	case uint64:
+		return float64(x), nil
+	case int64:
+		return float64(x), nil
+	case int:
+		return float64(x), nil
+	case float32:
+		return float64(x), nil
+	case float64:
+		return float64(x), nil
+	default:
+		return math.NaN(), errors.New("Cannot convert to float - value has unknown type.")
+	}
+}
+
+func nearestMultiple(num, multiple int) int {
+	return (num + multiple - 1) / multiple * multiple
+}
+
+func checkErr(err error) bool {
+	if err != nil {
+		log.Println(err.Error())
+		return false
+	} else {
+		return true
 	}
 }
 
