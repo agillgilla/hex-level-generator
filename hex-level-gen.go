@@ -14,12 +14,17 @@ import (
 )
 
 const (
-	numRows   = 20
-	numCols   = 9
-	numLevels = 250
+	rowsPerScreen = 13
+	numCols       = 9
+	numLevels     = 250
 
-	maxClusterProb = .7
-	minClusterProb = .2
+	bossLevelPeriod         = 18
+	bossDiffPercentIncrease = .25
+
+	pointsIncrement = 5
+
+	maxClusterProb = .75
+	minClusterProb = .45
 
 	outDir = "levels"
 
@@ -29,7 +34,7 @@ const (
 	maxTargetScore = 1500
 
 	maxPushInterval = 15
-	minPushInterval = 5
+	minPushInterval = 8
 
 	maxNiceness = .5
 	minNiceness = .2
@@ -38,7 +43,7 @@ const (
 	minBombProb = .2
 
 	maxSuperProb = .075
-	minSuperProb = .01
+	minSuperProb = .03
 )
 
 var (
@@ -69,6 +74,8 @@ func main() {
 		os.Mkdir(outDir, 0644)
 	}
 
+	generateTutorialLevel()
+
 	hexProb := 1.0 - maxBombProb - maxSuperProb
 	bombProb := maxBombProb
 	superProb := maxSuperProb
@@ -94,12 +101,27 @@ func main() {
 
 		targetScore := linearScale(0, numLevels, minTargetScore, maxTargetScore, currLevel)
 
+		if (currLevel+1)%bossLevelPeriod == 0 {
+			currJsonMap["bossLevel"] = true
+			clusterProb = minClusterProb + (clusterProb-minClusterProb)*(1-bossDiffPercentIncrease)
+			niceness = minNiceness + (niceness-minNiceness)*(1-bossDiffPercentIncrease)
+			bombProb = minBombProb + (bombProb-minBombProb)*(1-bossDiffPercentIncrease)
+			superProb = minSuperProb + (superProb-minSuperProb)*(1-bossDiffPercentIncrease)
+			hexProb = 1.0 - bombProb - superProb
+		} else {
+			currJsonMap["bossLevel"] = false
+		}
+
 		currJsonMap["target"] = nearestMultiple(int(targetScore), targetMultiple)
 		currJsonMap["pushInterval"] = int(pushInterval)
 		currJsonMap["hexProb"] = hexProb
 		currJsonMap["bombProb"] = bombProb
 		currJsonMap["superProb"] = superProb
 		currJsonMap["niceness"] = niceness
+
+		pointsPerRow := numCols * pointsIncrement
+		numRows := rowsPerScreen + int(math.Ceil(float64(nearestMultiple(int(targetScore), targetMultiple))/float64(pointsPerRow)))
+		currJsonMap["numRows"] = numRows
 
 		/*
 			bombProb *= bombDecreaseFactor
@@ -117,7 +139,7 @@ func main() {
 			for currCol = 0; currCol < numCols; currCol++ {
 				randVal := rand.Float64()
 				if randVal < clusterProb {
-					adjacentModeColor := getAdjacentModeColor(currJsonMap, currRow, currCol)
+					adjacentModeColor := getAdjacentModeColor(currJsonMap, numRows, currRow, currCol)
 					if adjacentModeColor == "" {
 						currJsonMap[currRowStr].([]string)[currCol] = colors[rand.Intn(len(colors))]
 					} else {
@@ -139,6 +161,63 @@ func main() {
 		if err != nil {
 			log.Fatal("Error writing final json data to level file: ", err)
 		}
+	}
+}
+
+func generateTutorialLevel() {
+	jsonMap := make(map[string]interface{})
+
+	clusterProb := maxClusterProb
+	niceness := maxNiceness
+
+	bombProb := maxBombProb
+	superProb := maxSuperProb
+	hexProb := 1.0 - bombProb - superProb
+
+	pushInterval := maxPushInterval
+
+	targetScore := minTargetScore
+
+	jsonMap["bossLevel"] = false
+	jsonMap["pushInterval"] = int(pushInterval)
+	jsonMap["hexProb"] = hexProb
+	jsonMap["bombProb"] = bombProb
+	jsonMap["superProb"] = superProb
+	jsonMap["niceness"] = niceness
+
+	pointsPerRow := numCols * pointsIncrement
+	numRows := rowsPerScreen + int(math.Ceil(float64(nearestMultiple(int(targetScore), targetMultiple))/float64(pointsPerRow)))
+	jsonMap["numRows"] = numRows
+
+	var currRow, currCol int
+	for currRow = 1; currRow <= numRows; currRow++ {
+
+		currRowStr := getRowString(currRow)
+		jsonMap[currRowStr] = make([]string, numCols)
+
+		for currCol = 0; currCol < numCols; currCol++ {
+			randVal := rand.Float64()
+			if randVal < clusterProb {
+				adjacentModeColor := getAdjacentModeColor(jsonMap, numRows, currRow, currCol)
+				if adjacentModeColor == "" {
+					jsonMap[currRowStr].([]string)[currCol] = colors[rand.Intn(len(colors))]
+				} else {
+					jsonMap[currRowStr].([]string)[currCol] = adjacentModeColor
+				}
+			} else {
+				jsonMap[currRowStr].([]string)[currCol] = colors[rand.Intn(len(colors))]
+			}
+		}
+	}
+
+	outJsonData, err := json.MarshalIndent(jsonMap, "", "    ")
+	if err != nil {
+		log.Fatal("Error marshalling final level data for output: ", err)
+	}
+
+	err = ioutil.WriteFile(filepath.Join(outDir, "tutorial.json"), outJsonData, 0644)
+	if err != nil {
+		log.Fatal("Error writing final json data to level file: ", err)
 	}
 }
 
@@ -210,14 +289,14 @@ func checkErr(err error) bool {
 	}
 }
 
-func getAdjacentModeColor(currJsonMap map[string]interface{}, row, col int) string {
+func getAdjacentModeColor(currJsonMap map[string]interface{}, numRows, row, col int) string {
 	colorCounts := make(map[string]int)
 
 	for _, indices := range commonAdjIndices {
 		adjRow := row + indices[0]
 		adjCol := col + indices[1]
 
-		if indicesValid(adjRow, adjCol) {
+		if indicesValid(numRows, adjRow, adjCol) {
 			if row, ok := currJsonMap[getRowString(adjRow)]; ok {
 				color := row.([]string)[adjCol]
 				colorCounts[color] = colorCounts[color] + 1
@@ -230,7 +309,7 @@ func getAdjacentModeColor(currJsonMap map[string]interface{}, row, col int) stri
 			adjRow := row + indices[0]
 			adjCol := col + indices[1]
 
-			if indicesValid(adjRow, adjCol) {
+			if indicesValid(numRows, adjRow, adjCol) {
 				if row, ok := currJsonMap[getRowString(adjRow)]; ok {
 					color := row.([]string)[adjCol]
 					colorCounts[color] = colorCounts[color] + 1
@@ -242,7 +321,7 @@ func getAdjacentModeColor(currJsonMap map[string]interface{}, row, col int) stri
 			adjRow := row + indices[0]
 			adjCol := col + indices[1]
 
-			if indicesValid(adjRow, adjCol) {
+			if indicesValid(numRows, adjRow, adjCol) {
 				if row, ok := currJsonMap[getRowString(adjRow)]; ok {
 					color := row.([]string)[adjCol]
 					colorCounts[color] = colorCounts[color] + 1
@@ -269,7 +348,7 @@ func getAdjacentModeColor(currJsonMap map[string]interface{}, row, col int) stri
 	}
 }
 
-func indicesValid(row int, col int) bool {
+func indicesValid(numRows, row, col int) bool {
 	return row > 0 && row <= numRows && col >= 0 && col < numCols
 }
 
